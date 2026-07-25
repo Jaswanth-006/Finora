@@ -1,0 +1,26 @@
+{
+  "name": "finora-monorepo",
+  "version": "1.0.0",
+  "description": "Advanced MERN AI Finance SaaS Platform",
+  "private": true,
+  "scripts": {
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:client": "npm --prefix client run dev",
+    "build:backend": "npm --prefix backend run build",
+    "build:client": "npm --prefix client run build",
+    "build": "npm run build:backend && npm run build:client"
+  },
+  "keywords": [
+    "mern",
+    "finance",
+    "saas",
+    "ai",
+    "gemini",
+    "react",
+    "nodejs",
+    "express",
+    "mongodb"
+  ],
+  "author": "Jaswanth-006",
+  "license": "MIT"
+}
