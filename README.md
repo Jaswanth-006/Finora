@@ -52,11 +52,6 @@ Finora bridges personal wealth management with cutting-edge artificial intellige
 | **Cron Engine** | Automated Recurring Bills | Background scheduler processing recurring transaction intervals (Daily, Weekly, Monthly, Yearly). |
 | **Email Reports** | Scheduled Email Statements | Automated Handlebars HTML monthly financial statement compiled and sent via Resend API. |
 
-### 2.3 Non-Functional Requirements
-- **Performance**: Sub-100ms API response time for transaction queries with MongoDB index optimizations.
-- **Reliability**: Isolated background task execution using `node-cron` with atomic database sessions.
-- **Usability**: Responsive design supporting mobile, tablet, and desktop viewports with glassmorphism UI.
-
 ---
 
 ## 🏗️ 3. Frontend Architecture
@@ -119,16 +114,25 @@ backend/
 
 Finora incorporates an **Intelligent AI Vision Pipeline** powered by **Google Gemini 1.5 Flash**.
 
-```
-  ┌─────────────────┐       ┌──────────────────────┐       ┌──────────────────────┐
-  │ User Uploads    │ ────► │ Convert File to      │ ────► │ Send Multimodal      │
-  │ Receipt Image   │       │ Base64 Data Stream   │       │ Prompt to Gemini AI  │
-  └─────────────────┘       └──────────────────────┘       └──────────────────────┘
-                                                                       │
-  ┌─────────────────┐       ┌──────────────────────┐                   │
-  │ Form Autofilled │ ◄──── │ Clean & Parse        │ ◄─────────────────┘
-  │ with Transaction│       │ Structured JSON Data │
-  └─────────────────┘       └──────────────────────┘
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User / Client
+    participant Frontend as React Client UI
+    participant Backend as Express API Server
+    participant Gemini as Google Gemini 1.5 AI
+    participant Cloudinary as Cloudinary CDN
+
+    User->>Frontend: Uploads Receipt Image
+    Frontend->>Backend: POST /api/v1/transaction/scan-receipt (Multer File)
+    Backend->>Cloudinary: Upload Receipt Image File
+    Cloudinary-->>Backend: Return Secure CDN Image URL
+    Backend->>Backend: Convert Image Buffer to Base64
+    Backend->>Gemini: generateContent(Base64 Image + System Prompt)
+    Gemini-->>Backend: Returns Raw Structured JSON String
+    Backend->>Backend: Clean & Parse JSON (Title, Amount, Date, Category)
+    Backend-->>Frontend: Return Extracted Transaction Payload
+    Frontend->>User: Auto-populates Transaction Form Drawer
 ```
 
 ### Prompt Engineering Pipeline
@@ -142,62 +146,121 @@ Finora incorporates an **Intelligent AI Vision Pipeline** powered by **Google Ge
 
 The backend runs a background cron engine using `node-cron`:
 
-1. **Recurring Transaction Processor (`transaction.job.ts`)**:
-   - Scans transactions where `isRecurring = true` and `nextRecurringDate <= NOW`.
-   - Automatically clones the recurring record with `date = nextRecurringDate`.
-   - Advances `nextRecurringDate` based on the specified interval (`DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY`).
-2. **Monthly Report Dispatcher (`report.job.ts`)**:
-   - Executes on the 1st day of every month.
-   - Computes last month's financial metrics using MongoDB aggregation.
-   - Generates AI insights via Gemini API and compiles a Handlebars HTML template.
-   - Dispatches financial reports to users via **Resend Email API**.
+```mermaid
+flowchart TD
+    Start([node-cron Scheduler]) --> BranchA{Task Type}
+
+    BranchA -->|Daily Cron Job| RecurrJob[Process Recurring Transactions]
+    RecurrJob --> QueryRecurr[(Query Transactions: isRecurring = true & nextRecurringDate <= NOW)]
+    QueryRecurr --> LoopRecurr[Iterate Over Matching Transactions]
+    LoopRecurr --> CreateNext[Create New Transaction Instance]
+    CreateNext --> AdvanceDate[Advance nextRecurringDate to Next Interval]
+
+    BranchA -->|Monthly 1st Cron Job| ReportJob[Process Monthly Reports]
+    ReportJob --> QuerySettings[(Query ReportSettings: isEnabled = true & nextReportDate <= NOW)]
+    QuerySettings --> AggregateData[MongoDB Aggregation Pipeline: Calculate Total Income & Expenses]
+    AggregateData --> GenAI[Google Gemini AI: Generate Financial Insights]
+    GenAI --> CompileEmail[Compile Handlebars HTML Template]
+    CompileEmail --> SendResend[Send Email via Resend API]
+    SendResend --> SaveHistory[(Save Report Model Record & Update nextReportDate)]
+```
 
 ---
 
 ## 📐 7. System Architecture & Data Flow Diagrams
 
-```
-+-----------------------------------------------------------------------------------+
-|                                   FINORA CLIENT                                   |
-|   (React 18 + Vite + Redux Toolkit + Shadcn UI + Recharts + Tailwind CSS)         |
-+-----------------------------------------------------------------------------------+
-                                      │  ▲
-                            (HTTP/REST │  │ JSON Data)
-                                      ▼  │
-+-----------------------------------------------------------------------------------+
-|                                   EXPRESS SERVER                                  |
-|   (Express.js + TypeScript + Passport JWT + Zod Validation + node-cron Engine)    |
-+---------+--------------------+--------------------+--------------------+----------+
-          │                    │                    │                    │
-          ▼                    ▼                    ▼                    ▼
-+----------------───+ +──────────────────+ +──────────────────+ +──────────────────+
-|      MongoDB      | |  Google Gemini   | |   Cloudinary     | |    Resend API    |
-|   Database ODM    | |  AI Vision OCR   | |  Avatar Storage  | |  HTML Mailer    |
-+----------------───+ +──────────────────+ +──────────────────+ +──────────────────+
+```mermaid
+graph TD
+    subgraph ClientLayer ["Client Layer (React 18 + Vite + Redux)"]
+        UI["React Single Page Application"]
+        RTK["RTK Query / Redux Store"]
+        UI <--> RTK
+    end
+
+    subgraph APILayer ["Backend Server Layer (Node.js + Express)"]
+        Router["Express Router (/api/v1)"]
+        AuthMiddleware["Passport JWT Middleware"]
+        Controller["Controllers (Auth, Transaction, Analytics, Report)"]
+        Service["Services Layer (Business Logic)"]
+        
+        Router --> AuthMiddleware --> Controller --> Service
+    end
+
+    subgraph DB [Database Layer]
+        MongoDB[(MongoDB Database)]
+    end
+
+    subgraph Integrations [External AI & Cloud Services]
+        GeminiAI["Google Gemini 1.5 Vision AI"]
+        CloudinaryCDN["Cloudinary Asset Storage"]
+        ResendEmail["Resend Email API Provider"]
+    end
+
+    RTK <== HTTP REST / JSON ==> Router
+    Service <--> MongoDB
+    Service <--> GeminiAI
+    Service <--> CloudinaryCDN
+    Service <--> ResendEmail
 ```
 
 ---
 
 ## 🗄️ 8. Database Schema & Data Models
 
-### 8.1 Transaction Schema (`TransactionModel`)
-- `userId`: `ObjectId` (Ref: User, Indexed)
-- `title`: `String` (Required)
-- `amount`: `Number` (Required)
-- `type`: `Enum` (`INCOME`, `EXPENSE`)
-- `category`: `String` (Required)
-- `paymentMethod`: `String` (Required)
-- `date`: `Date` (Required)
-- `isRecurring`: `Boolean` (Default: `false`)
-- `recurringInterval`: `Enum` (`DAILY`, `WEEKLY`, `MONTHLY`, `YEARLY`, Nullable)
-- `nextRecurringDate`: `Date` (Nullable)
-- `lastProcessed`: `Date` (Nullable)
+```mermaid
+erDiagram
+    User ||--o{ Transaction : "owns"
+    User ||--o{ Report : "receives"
+    User ||--|| ReportSetting : "configures"
 
-### 8.2 User Schema (`UserModel`)
-- `name`: `String` (Required)
-- `email`: `String` (Required, Unique)
-- `password`: `String` (Bcrypt hashed)
-- `profilePicture`: `String` (Nullable)
+    User {
+        ObjectId _id PK
+        string name
+        string email UK
+        string password
+        string profilePicture
+        date createdAt
+        date updatedAt
+    }
+
+    Transaction {
+        ObjectId _id PK
+        ObjectId userId FK
+        string title
+        number amount
+        string type "INCOME | EXPENSE"
+        string category
+        string paymentMethod
+        date date
+        boolean isRecurring
+        string recurringInterval "DAILY | WEEKLY | MONTHLY | YEARLY"
+        date nextRecurringDate
+        date lastProcessed
+        date createdAt
+        date updatedAt
+    }
+
+    Report {
+        ObjectId _id PK
+        ObjectId userId FK
+        date sentDate
+        string period
+        string status "SENT | FAILED | NO_ACTIVITY"
+        date createdAt
+        date updatedAt
+    }
+
+    ReportSetting {
+        ObjectId _id PK
+        ObjectId userId FK
+        string frequency "MONTHLY"
+        date lastSentDate
+        date nextReportDate
+        boolean isEnabled
+        date createdAt
+        date updatedAt
+    }
+```
 
 ---
 
